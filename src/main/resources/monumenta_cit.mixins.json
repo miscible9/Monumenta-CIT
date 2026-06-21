@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "com.monumenta.reborn.cit.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ArmorFeatureRendererMixin",
+    "ItemModelManagerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

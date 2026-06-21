@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "monumenta_cit",
+  "version": "${version}",
+  "name": "Monumenta CIT",
+  "description": "Runtime custom item texture and model rules for Monumenta resource packs.",
+  "authors": [
+    "Monumenta Reborn"
+  ],
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.monumenta.reborn.cit.MonumentaCitClient"
+    ]
+  },
+  "mixins": [
+    "monumenta_cit.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "minecraft": "1.21.11",
+    "fabric-api": "*",
+    "java": ">=21"
+  }
+}
