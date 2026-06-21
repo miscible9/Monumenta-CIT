@@ -83,7 +83,7 @@ public final class CitRuleManager {
         Map<Item, ItemRuleSet> ruleSets = new HashMap<>();
         loaded.forEach((item, rules) -> ruleSets.put(item, new ItemRuleSet(
             List.copyOf(rules),
-            candidateCache(rules),
+            itemCandidateIndex(rules),
             rules.stream().anyMatch(rule -> rule.name() != null),
             rules.stream().anyMatch(rule -> rule.hope() != null),
             rules.stream().anyMatch(CitRuleManager::hasCustomDataCondition),
@@ -96,7 +96,7 @@ public final class CitRuleManager {
         Map<Item, ArmorRuleSet> ruleSets = new HashMap<>();
         loaded.forEach((item, rules) -> ruleSets.put(item, new ArmorRuleSet(
             List.copyOf(rules),
-            armorCandidateCache(rules),
+            armorCandidateIndex(rules),
             rules.stream().anyMatch(rule -> rule.name() != null),
             rules.stream().anyMatch(rule -> rule.hope() != null),
             rules.stream().anyMatch(CitRuleManager::hasCustomDataCondition),
@@ -105,16 +105,60 @@ public final class CitRuleManager {
         return Map.copyOf(ruleSets);
     }
 
-    private static Map<String, List<CitRule>> candidateCache(List<CitRule> rules) {
-        return rules.stream().anyMatch(rule -> rule.name() != null && !rule.namePattern())
-            ? new ConcurrentHashMap<>()
-            : null;
+    private static CandidateIndex<CitRule> itemCandidateIndex(List<CitRule> rules) {
+        List<CitRule> fallbackRules = rules.stream()
+            .filter(rule -> rule.name() == null || rule.namePattern())
+            .toList();
+        Map<String, List<CitRule>> exactCandidates = new HashMap<>();
+        Map<String, List<CitRule>> ignoreCaseCandidates = new HashMap<>();
+        for (CitRule rule : rules) {
+            if (rule.name() == null || rule.namePattern()) continue;
+            exactCandidates.computeIfAbsent(rule.name(), name -> itemCandidatesFor(rules, name));
+            if (rule.nameIgnoreCase()) {
+                ignoreCaseCandidates.computeIfAbsent(rule.name().toLowerCase(Locale.ROOT), name -> itemIgnoreCaseCandidatesFor(rules, name));
+            }
+        }
+        return new CandidateIndex<>(fallbackRules, Map.copyOf(exactCandidates), Map.copyOf(ignoreCaseCandidates));
     }
 
-    private static Map<String, List<ArmorCitRule>> armorCandidateCache(List<ArmorCitRule> rules) {
-        return rules.stream().anyMatch(rule -> rule.name() != null && !rule.namePattern())
-            ? new ConcurrentHashMap<>()
-            : null;
+    private static CandidateIndex<ArmorCitRule> armorCandidateIndex(List<ArmorCitRule> rules) {
+        List<ArmorCitRule> fallbackRules = rules.stream()
+            .filter(rule -> rule.name() == null || rule.namePattern())
+            .toList();
+        Map<String, List<ArmorCitRule>> exactCandidates = new HashMap<>();
+        Map<String, List<ArmorCitRule>> ignoreCaseCandidates = new HashMap<>();
+        for (ArmorCitRule rule : rules) {
+            if (rule.name() == null || rule.namePattern()) continue;
+            exactCandidates.computeIfAbsent(rule.name(), name -> armorCandidatesFor(rules, name));
+            if (rule.nameIgnoreCase()) {
+                ignoreCaseCandidates.computeIfAbsent(rule.name().toLowerCase(Locale.ROOT), name -> armorIgnoreCaseCandidatesFor(rules, name));
+            }
+        }
+        return new CandidateIndex<>(fallbackRules, Map.copyOf(exactCandidates), Map.copyOf(ignoreCaseCandidates));
+    }
+
+    private static List<CitRule> itemCandidatesFor(List<CitRule> rules, String stackName) {
+        return rules.stream()
+            .filter(rule -> rule.name() == null || rule.namePattern() || matchesExactName(rule.name(), rule.nameIgnoreCase(), stackName))
+            .toList();
+    }
+
+    private static List<CitRule> itemIgnoreCaseCandidatesFor(List<CitRule> rules, String lowerStackName) {
+        return rules.stream()
+            .filter(rule -> rule.name() == null || rule.namePattern() || matchesIndexedName(rule.name(), rule.nameIgnoreCase(), lowerStackName))
+            .toList();
+    }
+
+    private static List<ArmorCitRule> armorCandidatesFor(List<ArmorCitRule> rules, String stackName) {
+        return rules.stream()
+            .filter(rule -> rule.name() == null || rule.namePattern() || matchesExactName(rule.name(), rule.nameIgnoreCase(), stackName))
+            .toList();
+    }
+
+    private static List<ArmorCitRule> armorIgnoreCaseCandidatesFor(List<ArmorCitRule> rules, String lowerStackName) {
+        return rules.stream()
+            .filter(rule -> rule.name() == null || rule.namePattern() || matchesIndexedName(rule.name(), rule.nameIgnoreCase(), lowerStackName))
+            .toList();
     }
 
     private static boolean hasCustomDataCondition(CitRule rule) {
@@ -249,6 +293,10 @@ public final class CitRuleManager {
 
     private static boolean matchesExactName(String name, boolean nameIgnoreCase, String stackName) {
         return nameIgnoreCase ? name.equalsIgnoreCase(stackName) : name.equals(stackName);
+    }
+
+    private static boolean matchesIndexedName(String name, boolean nameIgnoreCase, String lowerStackName) {
+        return nameIgnoreCase && name.toLowerCase(Locale.ROOT).equals(lowerStackName);
     }
 
     private static boolean matchesNbtConditions(List<CitNbtCondition> nbtConditions, StackMatchContext context) {
@@ -598,34 +646,43 @@ public final class CitRuleManager {
 
     private record ItemRuleSet(
         List<CitRule> rules,
-        Map<String, List<CitRule>> candidateCache,
+        CandidateIndex<CitRule> candidateIndex,
         boolean needsName,
         boolean needsHope,
         boolean needsCustomData,
         boolean needsLore
     ) {
         private List<CitRule> candidates(String stackName) {
-            if (candidateCache == null || stackName == null) return rules;
-            return candidateCache.computeIfAbsent(stackName, name -> rules.stream()
-                .filter(rule -> rule.name() == null || rule.namePattern() || matchesExactName(rule.name(), rule.nameIgnoreCase(), stackName))
-                .toList());
+            if (stackName == null) return rules;
+            List<CitRule> exact = candidateIndex.exactCandidates().get(stackName);
+            if (exact != null) return exact;
+            List<CitRule> ignoreCase = candidateIndex.ignoreCaseCandidates().get(stackName.toLowerCase(Locale.ROOT));
+            return ignoreCase != null ? ignoreCase : candidateIndex.fallbackRules();
         }
     }
 
     private record ArmorRuleSet(
         List<ArmorCitRule> rules,
-        Map<String, List<ArmorCitRule>> candidateCache,
+        CandidateIndex<ArmorCitRule> candidateIndex,
         boolean needsName,
         boolean needsHope,
         boolean needsCustomData,
         boolean needsLore
     ) {
         private List<ArmorCitRule> candidates(String stackName) {
-            if (candidateCache == null || stackName == null) return rules;
-            return candidateCache.computeIfAbsent(stackName, name -> rules.stream()
-                .filter(rule -> rule.name() == null || rule.namePattern() || matchesExactName(rule.name(), rule.nameIgnoreCase(), stackName))
-                .toList());
+            if (stackName == null) return rules;
+            List<ArmorCitRule> exact = candidateIndex.exactCandidates().get(stackName);
+            if (exact != null) return exact;
+            List<ArmorCitRule> ignoreCase = candidateIndex.ignoreCaseCandidates().get(stackName.toLowerCase(Locale.ROOT));
+            return ignoreCase != null ? ignoreCase : candidateIndex.fallbackRules();
         }
+    }
+
+    private record CandidateIndex<T>(
+        List<T> fallbackRules,
+        Map<String, List<T>> exactCandidates,
+        Map<String, List<T>> ignoreCaseCandidates
+    ) {
     }
 
     private record StackMatchContext(
