@@ -11,14 +11,17 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.item.model.ItemModel;
 import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.ChargedProjectilesComponent;
 import net.minecraft.component.type.LoreComponent;
 import net.minecraft.component.type.NbtComponent;
 import net.minecraft.item.Item;
+import net.minecraft.item.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.equipment.EquipmentAsset;
 import net.minecraft.item.equipment.EquipmentAssetKeys;
@@ -39,6 +42,7 @@ public final class CitRuleManager {
     private static final List<String> HOPE_PARTS = List.of(HOPE_PATH.split("\\."));
     private static volatile Map<Item, ItemRuleSet> rulesByItem = Map.of();
     private static volatile Map<Item, ArmorRuleSet> armorRulesByItem = Map.of();
+    private static volatile Map<Identifier, ItemModel> itemModelCache = Map.of();
 
     private CitRuleManager() {
     }
@@ -67,6 +71,7 @@ public final class CitRuleManager {
         ));
         rulesByItem = itemRuleSets(loaded);
         armorRulesByItem = armorRuleSets(loadedArmor);
+        itemModelCache = new ConcurrentHashMap<>();
         LOGGER.info(
             "Loaded {} Monumenta CIT item rules and {} armor rules",
             loaded.values().stream().mapToInt(List::size).sum(),
@@ -78,6 +83,7 @@ public final class CitRuleManager {
         Map<Item, ItemRuleSet> ruleSets = new HashMap<>();
         loaded.forEach((item, rules) -> ruleSets.put(item, new ItemRuleSet(
             List.copyOf(rules),
+            candidateCache(rules),
             rules.stream().anyMatch(rule -> rule.name() != null),
             rules.stream().anyMatch(rule -> rule.hope() != null),
             rules.stream().anyMatch(CitRuleManager::hasCustomDataCondition),
@@ -90,12 +96,25 @@ public final class CitRuleManager {
         Map<Item, ArmorRuleSet> ruleSets = new HashMap<>();
         loaded.forEach((item, rules) -> ruleSets.put(item, new ArmorRuleSet(
             List.copyOf(rules),
+            armorCandidateCache(rules),
             rules.stream().anyMatch(rule -> rule.name() != null),
             rules.stream().anyMatch(rule -> rule.hope() != null),
             rules.stream().anyMatch(CitRuleManager::hasCustomDataCondition),
             rules.stream().anyMatch(CitRuleManager::hasLoreCondition)
         )));
         return Map.copyOf(ruleSets);
+    }
+
+    private static Map<String, List<CitRule>> candidateCache(List<CitRule> rules) {
+        return rules.stream().anyMatch(rule -> rule.name() != null && !rule.namePattern())
+            ? new ConcurrentHashMap<>()
+            : null;
+    }
+
+    private static Map<String, List<ArmorCitRule>> armorCandidateCache(List<ArmorCitRule> rules) {
+        return rules.stream().anyMatch(rule -> rule.name() != null && !rule.namePattern())
+            ? new ConcurrentHashMap<>()
+            : null;
     }
 
     private static boolean hasCustomDataCondition(CitRule rule) {
@@ -121,7 +140,7 @@ public final class CitRuleManager {
         }
 
         StackMatchContext context = StackMatchContext.create(stack, ruleSet.needsName(), ruleSet.needsHope(), ruleSet.needsCustomData(), ruleSet.needsLore());
-        for (CitRule rule : ruleSet.rules()) {
+        for (CitRule rule : ruleSet.candidates(context.stackName())) {
             if (rule.name() != null && !matchesName(rule, context.stackName())) continue;
             if (rule.hope() != null && !rule.hope().equals(context.hope())) continue;
             if (!matchesNbtConditions(rule.nbtConditions(), context)) continue;
@@ -141,7 +160,10 @@ public final class CitRuleManager {
         if (model == null) {
             return null;
         }
-        ItemModel itemModel = MinecraftClient.getInstance().getBakedModelManager().getItemModel(model);
+        ItemModel itemModel = itemModelCache.computeIfAbsent(
+            model,
+            id -> MinecraftClient.getInstance().getBakedModelManager().getItemModel(id)
+        );
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("Resolved CIT item model {} -> {}", model, itemModel.getClass().getName());
         }
@@ -155,15 +177,14 @@ public final class CitRuleManager {
         }
 
         StackMatchContext context = StackMatchContext.create(stack, ruleSet.needsName(), ruleSet.needsHope(), ruleSet.needsCustomData(), ruleSet.needsLore());
-        for (ArmorCitRule rule : ruleSet.rules()) {
+        for (ArmorCitRule rule : ruleSet.candidates(context.stackName())) {
             if (rule.name() != null && !matchesName(rule.name(), rule.namePattern(), rule.nameIgnoreCase(), rule.nameRegex(), context.stackName())) continue;
             if (rule.hope() != null && !rule.hope().equals(context.hope())) continue;
             if (!matchesNbtConditions(rule.nbtConditions(), context)) continue;
-            RegistryKey<EquipmentAsset> asset = RegistryKey.of(EquipmentAssetKeys.REGISTRY_KEY, rule.asset());
             if (LOGGER.isDebugEnabled()) {
-                LOGGER.debug("Matched armor CIT rule {} for {} named '{}' -> {}", rule.id(), Registries.ITEM.getId(stack.getItem()), context.stackNameForLog(), asset.getValue());
+                LOGGER.debug("Matched armor CIT rule {} for {} named '{}' -> {}", rule.id(), Registries.ITEM.getId(stack.getItem()), context.stackNameForLog(), rule.assetKey().getValue());
             }
-            return asset;
+            return rule.assetKey();
         }
         return fallback;
     }
@@ -223,6 +244,10 @@ public final class CitRuleManager {
         if (namePattern) {
             return nameRegex != null && nameRegex.matcher(stackName).matches();
         }
+        return matchesExactName(name, nameIgnoreCase, stackName);
+    }
+
+    private static boolean matchesExactName(String name, boolean nameIgnoreCase, String stackName) {
         return nameIgnoreCase ? name.equalsIgnoreCase(stackName) : name.equals(stackName);
     }
 
@@ -268,13 +293,13 @@ public final class CitRuleManager {
     }
 
     private static boolean isCharged(ItemStack stack) {
-        Object projectiles = stack.get(DataComponentTypes.CHARGED_PROJECTILES);
-        return projectiles != null && !projectiles.toString().contains("[]");
+        ChargedProjectilesComponent projectiles = stack.get(DataComponentTypes.CHARGED_PROJECTILES);
+        return projectiles != null && !projectiles.isEmpty();
     }
 
     private static boolean isChargedWithRocket(ItemStack stack) {
-        Object projectiles = stack.get(DataComponentTypes.CHARGED_PROJECTILES);
-        return projectiles != null && projectiles.toString().toLowerCase(Locale.ROOT).contains("firework_rocket");
+        ChargedProjectilesComponent projectiles = stack.get(DataComponentTypes.CHARGED_PROJECTILES);
+        return projectiles != null && projectiles.contains(Items.FIREWORK_ROCKET);
     }
 
     private static NbtCompound customData(ItemStack stack) {
@@ -356,6 +381,7 @@ public final class CitRuleManager {
         String hope = properties.getProperty("nbt." + HOPE_PATH);
         List<CitNbtCondition> nbtConditions = nbtConditions(properties);
         int weight = parseInt(properties.getProperty("weight"), 0);
+        Identifier asset = equipmentAssetId(source);
         return new ArmorCitRule(
             source.toString(),
             List.copyOf(items),
@@ -366,7 +392,8 @@ public final class CitRuleManager {
             hope,
             List.copyOf(nbtConditions),
             weight,
-            equipmentAssetId(source)
+            asset,
+            RegistryKey.of(EquipmentAssetKeys.REGISTRY_KEY, asset)
         );
     }
 
@@ -571,20 +598,34 @@ public final class CitRuleManager {
 
     private record ItemRuleSet(
         List<CitRule> rules,
+        Map<String, List<CitRule>> candidateCache,
         boolean needsName,
         boolean needsHope,
         boolean needsCustomData,
         boolean needsLore
     ) {
+        private List<CitRule> candidates(String stackName) {
+            if (candidateCache == null || stackName == null) return rules;
+            return candidateCache.computeIfAbsent(stackName, name -> rules.stream()
+                .filter(rule -> rule.name() == null || rule.namePattern() || matchesExactName(rule.name(), rule.nameIgnoreCase(), stackName))
+                .toList());
+        }
     }
 
     private record ArmorRuleSet(
         List<ArmorCitRule> rules,
+        Map<String, List<ArmorCitRule>> candidateCache,
         boolean needsName,
         boolean needsHope,
         boolean needsCustomData,
         boolean needsLore
     ) {
+        private List<ArmorCitRule> candidates(String stackName) {
+            if (candidateCache == null || stackName == null) return rules;
+            return candidateCache.computeIfAbsent(stackName, name -> rules.stream()
+                .filter(rule -> rule.name() == null || rule.namePattern() || matchesExactName(rule.name(), rule.nameIgnoreCase(), stackName))
+                .toList());
+        }
     }
 
     private record StackMatchContext(
