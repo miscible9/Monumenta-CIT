@@ -498,6 +498,7 @@ public final class CitRuleManager {
         if (raw == null || raw.isBlank()) return new ParsedName(null, false, false, null);
         boolean pattern = false;
         boolean ignoreCase = false;
+        boolean regexSyntax = false;
         String value = raw;
         if (value.startsWith("ipattern:")) {
             pattern = true;
@@ -509,20 +510,22 @@ public final class CitRuleManager {
         } else if (value.startsWith("iregex:")) {
             pattern = true;
             ignoreCase = true;
+            regexSyntax = true;
             value = value.substring("iregex:".length());
         } else if (value.startsWith("regex:")) {
             pattern = true;
+            regexSyntax = true;
             value = value.substring("regex:".length());
         }
         String stripped = stripJsonText(value);
-        return new ParsedName(stripped, pattern, ignoreCase, compileNamePattern(stripped, pattern, ignoreCase));
+        return new ParsedName(stripped, pattern, ignoreCase, compileNamePattern(stripped, pattern, ignoreCase, regexSyntax));
     }
 
-    private static Pattern compileNamePattern(String name, boolean namePattern, boolean nameIgnoreCase) {
+    private static Pattern compileNamePattern(String name, boolean namePattern, boolean nameIgnoreCase, boolean regexSyntax) {
         if (!namePattern) return null;
         int flags = nameIgnoreCase ? Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE : 0;
         try {
-            return Pattern.compile(globToRegex(name), flags);
+            return Pattern.compile(regexSyntax ? name : globToRegex(name), flags);
         } catch (PatternSyntaxException ignored) {
             return null;
         }
