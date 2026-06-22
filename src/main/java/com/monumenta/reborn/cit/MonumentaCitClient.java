@@ -6,6 +6,7 @@ import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.resource.ResourceType;
 import net.minecraft.util.Identifier;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,7 +19,7 @@ public final class MonumentaCitClient implements ClientModInitializer {
         LOGGER.info("Initializing Monumenta CIT runtime");
         ResourceManagerHelper.get(ResourceType.CLIENT_RESOURCES).registerReloadListener(new SimpleSynchronousResourceReloadListener() {
             @Override
-            public Identifier getFabricId() {
+            public @NonNull Identifier getFabricId() {
                 return Identifier.of(MOD_ID, "cit_rules");
             }
 

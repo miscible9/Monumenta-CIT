@@ -7,7 +7,12 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
+
+    plugins {
+        id 'org.jetbrains.kotlin.jvm' version kotlin_version
+    }
 }
+
 
 dependencyResolutionManagement {
     repositories {
