@@ -7,17 +7,17 @@ import com.monumenta.reborn.cit.rule.CitRule
 import com.monumenta.reborn.cit.rule.CitRuleConstants
 import com.monumenta.reborn.cit.rule.ParsedName
 import com.monumenta.reborn.cit.text.CitText
-import net.minecraft.item.Item
-import net.minecraft.item.equipment.EquipmentAssetKeys
-import net.minecraft.registry.Registries
-import net.minecraft.registry.RegistryKey
-import net.minecraft.resource.Resource
-import net.minecraft.util.Identifier
+import net.minecraft.core.registries.BuiltInRegistries
+import net.minecraft.resources.Identifier
+import net.minecraft.resources.ResourceKey
+import net.minecraft.server.packs.resources.Resource
+import net.minecraft.world.item.Item
+import net.minecraft.world.item.equipment.EquipmentAssets
 import java.util.zip.GZIPInputStream
 
 class CompiledCitIndexReader {
     fun read(resource: Resource): CompiledCitIndex {
-        BinaryIndexReader(GZIPInputStream(resource.inputStream)).use { reader ->
+        BinaryIndexReader(GZIPInputStream(resource.open())).use { reader ->
             reader.expectMagic(CitRuleConstants.binaryCompiledIndexMagic)
             val strings = Array(reader.readInt()) { reader.readString() }
 
@@ -74,7 +74,7 @@ class CompiledCitIndexReader {
             nbtConditions = conditions,
             weight = weight,
             asset = asset,
-            assetKey = RegistryKey.of(EquipmentAssetKeys.REGISTRY_KEY, asset),
+            assetKey = ResourceKey.create(EquipmentAssets.ROOT_ID, asset),
         )
     }
 
@@ -82,7 +82,7 @@ class CompiledCitIndexReader {
         buildList {
             repeat(reader.readInt()) {
                 val id = CitRuleParser.identifier(strings[reader.readInt()]) ?: return@repeat
-                add(Registries.ITEM.get(id))
+                BuiltInRegistries.ITEM.getValue(id)?.let(::add)
             }
         }
 

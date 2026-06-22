@@ -3,7 +3,7 @@ package com.monumenta.reborn.cit.runtime
 import com.monumenta.reborn.cit.match.CitRuleMatcher
 import com.monumenta.reborn.cit.rule.ArmorCitRule
 import com.monumenta.reborn.cit.rule.CitRule
-import net.minecraft.item.Item
+import net.minecraft.world.item.Item
 import java.util.Locale
 
 data class ItemRuleSet(

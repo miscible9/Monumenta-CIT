@@ -1,12 +1,12 @@
 package com.monumenta.reborn.cit.model
 
 import com.monumenta.reborn.cit.rule.CitRule
-import net.minecraft.client.MinecraftClient
-import net.minecraft.component.DataComponentTypes
-import net.minecraft.component.type.ChargedProjectilesComponent
-import net.minecraft.item.ItemStack
-import net.minecraft.item.Items
-import net.minecraft.util.Identifier
+import net.minecraft.client.Minecraft
+import net.minecraft.core.component.DataComponents
+import net.minecraft.resources.Identifier
+import net.minecraft.world.item.ItemStack
+import net.minecraft.world.item.Items
+import net.minecraft.world.item.component.ChargedProjectiles
 
 object CitModelSelector {
     fun select(rule: CitRule, stack: ItemStack): Identifier? =
@@ -21,11 +21,11 @@ object CitModelSelector {
         var state = 0
         if (isActiveStack(stack)) {
             state = state or 1
-            val player = MinecraftClient.getInstance().player
+            val player = Minecraft.getInstance().player
             if (player != null)
-                state = state or (useStage(player.itemUseTime) shl 1)
+                state = state or (useStage(player.useItemRemainingTicks) shl 1)
         }
-        val projectiles = stack.get(DataComponentTypes.CHARGED_PROJECTILES)
+        val projectiles = stack.get(DataComponents.CHARGED_PROJECTILES)
         if (projectiles != null && !projectiles.isEmpty) {
             state = state or (1 shl 5)
             if (projectiles.contains(Items.FIREWORK_ROCKET)) {
@@ -38,7 +38,7 @@ object CitModelSelector {
     private fun selectBowModel(rule: CitRule, stack: ItemStack): Identifier? {
         val models = rule.models
         if (isActiveStack(stack)) {
-            val useTicks = MinecraftClient.getInstance().player?.itemUseTime ?: 0
+            val useTicks = Minecraft.getInstance().player?.useItemRemainingTicks ?: 0
             if (useTicks >= 20) return first(models, "pulling_4", "pulling_3", "pulling_2", "pulling_1", "pulling_0", "base")
             if (useTicks >= 15) return first(models, "pulling_3", "pulling_2", "pulling_1", "pulling_0", "base")
             if (useTicks >= 10) return first(models, "pulling_2", "pulling_1", "pulling_0", "base")
@@ -53,7 +53,7 @@ object CitModelSelector {
         if (isChargedWithRocket(stack)) return first(models, "firework", "arrow", "base", "standby")
         if (isCharged(stack)) return first(models, "arrow", "base", "standby")
         if (isActiveStack(stack)) {
-            val useTicks = MinecraftClient.getInstance().player?.itemUseTime ?: 0
+            val useTicks = Minecraft.getInstance().player?.useItemRemainingTicks ?: 0
             if (useTicks >= 20) return first(models, "pulling_2", "pulling_1", "pulling_0", "standby", "base")
             if (useTicks >= 10) return first(models, "pulling_1", "pulling_0", "standby", "base")
             return first(models, "pulling_0", "standby", "base")
@@ -65,8 +65,8 @@ object CitModelSelector {
         if (isActiveStack(stack)) first(rule.models, "blocking", "base") else first(rule.models, "base")
 
     private fun isActiveStack(stack: ItemStack): Boolean {
-        val player = MinecraftClient.getInstance().player ?: return false
-        return player.isUsingItem && ItemStack.areItemsAndComponentsEqual(player.activeItem, stack)
+        val player = Minecraft.getInstance().player ?: return false
+        return player.isUsingItem && ItemStack.isSameItemSameComponents(player.useItem, stack)
     }
 
     private fun useStage(useTicks: Int): Int =
@@ -82,12 +82,12 @@ object CitModelSelector {
         keys.firstNotNullOfOrNull(models::get)
 
     private fun isCharged(stack: ItemStack): Boolean {
-        val projectiles: ChargedProjectilesComponent? = stack.get(DataComponentTypes.CHARGED_PROJECTILES)
+        val projectiles: ChargedProjectiles? = stack.get(DataComponents.CHARGED_PROJECTILES)
         return projectiles != null && !projectiles.isEmpty
     }
 
     private fun isChargedWithRocket(stack: ItemStack): Boolean {
-        val projectiles: ChargedProjectilesComponent? = stack.get(DataComponentTypes.CHARGED_PROJECTILES)
+        val projectiles: ChargedProjectiles? = stack.get(DataComponents.CHARGED_PROJECTILES)
         return projectiles != null && projectiles.contains(Items.FIREWORK_ROCKET)
     }
 }

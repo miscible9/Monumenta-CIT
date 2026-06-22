@@ -4,17 +4,23 @@ import com.monumenta.reborn.cit.rule.ArmorCitRule
 import com.monumenta.reborn.cit.rule.CitNbtCondition
 import com.monumenta.reborn.cit.rule.CitRule
 import com.monumenta.reborn.cit.rule.CitRuleConstants
+import com.monumenta.reborn.cit.rule.ParsedName
 import com.monumenta.reborn.cit.text.CitText
-import net.minecraft.item.Item
-import net.minecraft.item.equipment.EquipmentAssetKeys
-import net.minecraft.registry.Registries
-import net.minecraft.registry.RegistryKey
-import net.minecraft.util.Identifier
+import net.minecraft.core.registries.BuiltInRegistries
+import net.minecraft.resources.Identifier
+import net.minecraft.resources.ResourceKey
+import net.minecraft.world.item.Item
+import net.minecraft.world.item.equipment.EquipmentAssets
 import java.util.Properties
 
 object CitRuleParser {
-    private val modelProperties = linkedMapOf(
-        "model" to "base",
+    private const val ITEM_TYPE = "item"
+    private const val ARMOR_TYPE = "armor"
+    private const val DISPLAY_NAME_KEY = "nbt.display.Name"
+    private const val PLAIN_DISPLAY_NAME_KEY = "nbt.plain.display.Name"
+    private val hopeKey = "nbt.${CitRuleConstants.hopePath}"
+
+    private val dynamicModelProperties = linkedMapOf(
         "model.bow_pulling_0" to "pulling_0",
         "model.bow_pulling_1" to "pulling_1",
         "model.bow_pulling_2" to "pulling_2",
@@ -30,115 +36,163 @@ object CitRuleParser {
     )
 
     fun parseItemRule(source: Identifier, properties: Properties): CitRule? {
-        if (properties.getProperty("type", "item") != "item") return null
-        val items = itemList(properties.getProperty("items", properties.getProperty("matchItems")))
-        if (items.isEmpty()) return null
-
-        val parsedName = CitText.parseName(firstNonBlank(properties.getProperty("nbt.display.Name"), properties.getProperty("nbt.plain.display.Name")))
-        val hope = properties.getProperty("nbt.${CitRuleConstants.hopePath}")
-        val conditions = nbtConditions(properties)
-        val models = propertyModels(properties)
-        var model = propertyModel(properties, "model")
-        if (model == null && models.isEmpty()) return null
-        if (isLegacyOptifineModel(model) && models.values.all(::isLegacyOptifineModel)) return null
-
-        val type = typeFor(items, models)
-        if (type == CitRule.Type.SIMPLE && model == null && models.isNotEmpty()) {
-            model = models.values.first()
+        if (!isRuleType(properties, ITEM_TYPE)) {
+            return null
         }
 
+        val items = itemList(properties.itemListProperty())
+        if (items.isEmpty()) {
+            return null
+        }
+
+        val modelSelection = modelSelection(properties, items) ?: return null
+        val metadata = parsedRuleMetadata(source, properties, items)
         return CitRule(
-            id = source.toString(),
-            items = items,
-            name = parsedName.value,
-            namePattern = parsedName.pattern,
-            nameIgnoreCase = parsedName.ignoreCase,
-            nameRegex = parsedName.regex,
-            hope = hope,
-            nbtConditions = conditions,
-            weight = properties.getProperty("weight").parseIntOr(0),
-            type = type,
-            model = model,
-            models = models,
+            id = metadata.id,
+            items = metadata.items,
+            name = metadata.name.value,
+            namePattern = metadata.name.pattern,
+            nameIgnoreCase = metadata.name.ignoreCase,
+            nameRegex = metadata.name.regex,
+            hope = metadata.hope,
+            nbtConditions = metadata.nbtConditions,
+            weight = metadata.weight,
+            type = modelSelection.type,
+            model = modelSelection.model,
+            models = modelSelection.models,
         )
     }
 
     fun parseArmorRule(source: Identifier, properties: Properties): ArmorCitRule? {
-        if (properties.getProperty("type", "item") != "armor") return null
-        val items = itemList(properties.getProperty("items", properties.getProperty("matchItems")))
-        if (items.isEmpty() || !hasArmorLayerTexture(properties)) return null
+        if (!isRuleType(properties, ARMOR_TYPE)) {
+            return null
+        }
 
-        val parsedName = CitText.parseName(firstNonBlank(properties.getProperty("nbt.display.Name"), properties.getProperty("nbt.plain.display.Name")))
+        val items = itemList(properties.itemListProperty())
+        if (items.isEmpty()) {
+            return null
+        }
+        if (!hasArmorLayerTexture(properties)) {
+            return null
+        }
+
+        val metadata = parsedRuleMetadata(source, properties, items)
         val asset = equipmentAssetId(source)
         return ArmorCitRule(
-            id = source.toString(),
-            items = items,
-            name = parsedName.value,
-            namePattern = parsedName.pattern,
-            nameIgnoreCase = parsedName.ignoreCase,
-            nameRegex = parsedName.regex,
-            hope = properties.getProperty("nbt.${CitRuleConstants.hopePath}"),
-            nbtConditions = nbtConditions(properties),
-            weight = properties.getProperty("weight").parseIntOr(0),
+            id = metadata.id,
+            items = metadata.items,
+            name = metadata.name.value,
+            namePattern = metadata.name.pattern,
+            nameIgnoreCase = metadata.name.ignoreCase,
+            nameRegex = metadata.name.regex,
+            hope = metadata.hope,
+            nbtConditions = metadata.nbtConditions,
+            weight = metadata.weight,
             asset = asset,
-            assetKey = RegistryKey.of(EquipmentAssetKeys.REGISTRY_KEY, asset),
+            assetKey = ResourceKey.create(EquipmentAssets.ROOT_ID, asset),
         )
     }
 
     fun specificity(rule: CitRule): Int =
-        rule.nbtConditions.size * 10 +
-            if (rule.hope != null) 10 else 0 +
-            if (rule.name != null) if (rule.namePattern) 1 else 2 else 0
+        specificity(rule.nbtConditions, rule.hope, rule.name, rule.namePattern)
 
     fun specificity(rule: ArmorCitRule): Int =
-        rule.nbtConditions.size * 10 +
-            if (rule.hope != null) 10 else 0 +
-            if (rule.name != null) if (rule.namePattern) 1 else 2 else 0
+        specificity(rule.nbtConditions, rule.hope, rule.name, rule.namePattern)
 
     fun identifier(raw: String?): Identifier? {
-        if (raw.isNullOrBlank()) return null
+        if (raw.isNullOrBlank()) {
+            return null
+        }
+
         return try {
-            Identifier.of(raw)
+            Identifier.parse(raw)
         } catch (_: IllegalArgumentException) {
             null
         }
     }
 
     fun itemIds(items: List<Item>): String =
-        items.map { Registries.ITEM.getId(it).toString() }.toString()
+        items.map { BuiltInRegistries.ITEM.getKey(it).toString() }.toString()
 
     fun itemModelId(raw: String?): Identifier? {
-        if (raw.isNullOrBlank()) return null
-        val id = try {
-            Identifier.of(raw)
-        } catch (_: IllegalArgumentException) {
+        if (raw.isNullOrBlank()) {
             return null
         }
-        return if (id.path.startsWith("item/")) Identifier.of(id.namespace, id.path.removePrefix("item/")) else id
+
+        val id = identifier(raw) ?: return null
+        if (id.path.startsWith("item/")) {
+            return Identifier.fromNamespaceAndPath(id.namespace, id.path.removePrefix("item/"))
+        }
+        return id
+    }
+
+    private fun parsedRuleMetadata(
+        source: Identifier,
+        properties: Properties,
+        items: List<Item>,
+    ): ParsedRuleMetadata {
+        val rawName = firstNonBlank(
+            properties.getProperty(DISPLAY_NAME_KEY),
+            properties.getProperty(PLAIN_DISPLAY_NAME_KEY),
+        )
+        return ParsedRuleMetadata(
+            id = source.toString(),
+            items = items,
+            name = CitText.parseName(rawName),
+            hope = properties.getProperty(hopeKey),
+            nbtConditions = nbtConditions(properties),
+            weight = properties.getProperty("weight").parseIntOr(0),
+        )
+    }
+
+    private fun modelSelection(properties: Properties, items: List<Item>): ModelSelection? {
+        val dynamicModels = dynamicModels(properties)
+        val baseModel = propertyModel(properties, "model")
+        if (!hasAnyModel(baseModel, dynamicModels)) {
+            return null
+        }
+        if (allModelsAreLegacy(baseModel, dynamicModels)) {
+            return null
+        }
+
+        val type = typeFor(items, dynamicModels)
+        return ModelSelection(
+            type = type,
+            model = selectedBaseModel(type, baseModel, dynamicModels),
+            models = dynamicModels,
+        )
     }
 
     private fun nbtConditions(properties: Properties): List<CitNbtCondition> =
         properties.stringPropertyNames()
             .asSequence()
             .filter { it.startsWith("nbt.") }
-            .filterNot { it == "nbt.display.Name" || it == "nbt.plain.display.Name" || it == "nbt.${CitRuleConstants.hopePath}" }
-            .mapNotNull { key ->
-                val value = properties.getProperty(key)?.trim()
-                if (value.isNullOrBlank()) null else CitNbtCondition.of(key.removePrefix("nbt."), CitText.stripJsonText(value))
-            }
+            .filterNot(::isMetadataNbtKey)
+            .mapNotNull { key -> nbtCondition(properties, key) }
             .toList()
 
-    private fun itemList(raw: String?): List<Item> {
-        if (raw.isNullOrBlank()) return emptyList()
-        return raw.trim().split(Regex("\\s+"))
-            .map { if (":" in it) it else "minecraft:$it" }
-            .mapNotNull { identifier(it) }
-            .map { Registries.ITEM.get(it) }
+    private fun nbtCondition(properties: Properties, key: String): CitNbtCondition? {
+        val value = properties.getProperty(key)?.trim()
+        if (value.isNullOrBlank()) {
+            return null
+        }
+        return CitNbtCondition.of(key.removePrefix("nbt."), CitText.stripJsonText(value))
     }
 
-    private fun propertyModels(properties: Properties): Map<String, Identifier> =
+    private fun itemList(raw: String?): List<Item> {
+        if (raw.isNullOrBlank()) {
+            return emptyList()
+        }
+
+        return raw.trim().split(Regex("\\s+"))
+            .map(::namespacedItemId)
+            .mapNotNull(::identifier)
+            .mapNotNull { BuiltInRegistries.ITEM.getValue(it) }
+    }
+
+    private fun dynamicModels(properties: Properties): Map<String, Identifier> =
         buildMap {
-            for ((property, key) in modelProperties) {
+            for ((property, key) in dynamicModelProperties) {
                 propertyModel(properties, property)?.let { put(key, it) }
             }
         }
@@ -146,44 +200,155 @@ object CitRuleParser {
     private fun propertyModel(properties: Properties, property: String): Identifier? =
         itemModelId(properties.getProperty(property)?.trim())
 
-    private fun isLegacyOptifineModel(model: Identifier?): Boolean =
-        model != null && model.namespace == "minecraft" && (model.path.startsWith("optifine/") || model.path.startsWith("mcpatcher/"))
+    private fun allModelsAreLegacy(baseModel: Identifier?, dynamicModels: Map<String, Identifier>): Boolean {
+        if (!isLegacyOptifineModel(baseModel)) {
+            return false
+        }
+        return dynamicModels.values.all(::isLegacyOptifineModel)
+    }
+
+    private fun isLegacyOptifineModel(model: Identifier?): Boolean {
+        if (model == null) {
+            return false
+        }
+        if (model.namespace != "minecraft") {
+            return false
+        }
+        return legacyModelPrefixes.any { model.path.startsWith(it) }
+    }
 
     private fun typeFor(items: List<Item>, models: Map<String, Identifier>): CitRule.Type {
         for (item in items) {
-            val itemPath = Registries.ITEM.getId(item).path
-            if (itemPath == "bow" && hasPullingModel(models)) return CitRule.Type.BOW
-            if (itemPath == "crossbow" && hasCrossbowModel(models)) return CitRule.Type.CROSSBOW
-            if (itemPath == "shield" && "blocking" in models) return CitRule.Type.SHIELD
+            val itemPath = BuiltInRegistries.ITEM.getKey(item).path
+            val type = dynamicTypeFor(itemPath, models)
+            if (type != null) {
+                return type
+            }
         }
         return CitRule.Type.SIMPLE
     }
 
+    private fun dynamicTypeFor(itemPath: String, models: Map<String, Identifier>): CitRule.Type? =
+        when {
+            itemPath == "bow" && hasPullingModel(models) -> CitRule.Type.BOW
+            itemPath == "crossbow" && hasCrossbowModel(models) -> CitRule.Type.CROSSBOW
+            itemPath == "shield" && hasShieldBlockingModel(models) -> CitRule.Type.SHIELD
+            else -> null
+        }
+
     private fun hasPullingModel(models: Map<String, Identifier>): Boolean =
-        listOf("pulling_0", "pulling_1", "pulling_2", "pulling_3", "pulling_4").any(models::containsKey)
+        pullingModelKeys.any(models::containsKey)
 
     private fun hasCrossbowModel(models: Map<String, Identifier>): Boolean =
-        hasPullingModel(models) || "arrow" in models || "firework" in models
+        crossbowModelKeys.any(models::containsKey)
+
+    private fun hasShieldBlockingModel(models: Map<String, Identifier>): Boolean =
+        "blocking" in models
 
     private fun hasArmorLayerTexture(properties: Properties): Boolean =
-        properties.stringPropertyNames().any { it.startsWith("texture.") && "_layer_" in it }
+        properties.stringPropertyNames()
+            .any { it.startsWith("texture.") && "_layer_" in it }
 
     private fun equipmentAssetId(source: Identifier): Identifier {
-        var path = source.path
-        for (root in CitRuleConstants.propertiesRuleRoots) {
-            val prefix = "$root/"
-            if (path.startsWith(prefix)) {
-                path = path.removePrefix(prefix)
-                break
-            }
-        }
-        if (path.endsWith(".properties")) path = path.removeSuffix(".properties")
-        return Identifier.of(source.namespace, path)
+        val path = source.path
+            .removeKnownRuleRoot()
+            .removeSuffix(".properties")
+        return Identifier.fromNamespaceAndPath(source.namespace, path)
     }
 
-    private fun firstNonBlank(first: String?, second: String?): String? =
-        if (!first.isNullOrBlank()) first else second
+    private fun selectedBaseModel(
+        type: CitRule.Type,
+        baseModel: Identifier?,
+        dynamicModels: Map<String, Identifier>,
+    ): Identifier? {
+        if (type != CitRule.Type.SIMPLE) {
+            return baseModel
+        }
+        return baseModel ?: dynamicModels.values.firstOrNull()
+    }
+
+    private fun hasAnyModel(baseModel: Identifier?, dynamicModels: Map<String, Identifier>): Boolean =
+        listOf(baseModel != null, dynamicModels.isNotEmpty()).any { it }
+
+    private fun specificity(
+        nbtConditions: List<CitNbtCondition>,
+        hope: String?,
+        name: String?,
+        namePattern: Boolean,
+    ): Int =
+        nbtConditions.size * 10 +
+            if (hope != null) 10 else 0 +
+            if (name != null) nameSpecificity(namePattern) else 0
+
+    private fun nameSpecificity(pattern: Boolean): Int =
+        if (pattern) 1 else 2
+
+    private fun Properties.itemListProperty(): String? =
+        getProperty("items", getProperty("matchItems"))
+
+    private fun isRuleType(properties: Properties, expectedType: String): Boolean =
+        properties.getProperty("type", ITEM_TYPE) == expectedType
+
+    private fun isMetadataNbtKey(key: String): Boolean =
+        metadataNbtKeys.contains(key)
+
+    private fun namespacedItemId(itemId: String): String {
+        if (":" in itemId) {
+            return itemId
+        }
+        return "minecraft:$itemId"
+    }
+
+    private fun String.removeKnownRuleRoot(): String {
+        for (root in CitRuleConstants.propertiesRuleRoots) {
+            val prefix = "$root/"
+            if (startsWith(prefix)) {
+                return removePrefix(prefix)
+            }
+        }
+        return this
+    }
+
+    private fun firstNonBlank(first: String?, second: String?): String? {
+        if (!first.isNullOrBlank()) {
+            return first
+        }
+        return second
+    }
 
     private fun String?.parseIntOr(fallback: Int): Int =
         this?.trim()?.toIntOrNull() ?: fallback
+
+    private val metadataNbtKeys = setOf(
+        DISPLAY_NAME_KEY,
+        PLAIN_DISPLAY_NAME_KEY,
+        hopeKey,
+    )
+
+    private val pullingModelKeys = setOf(
+        "pulling_0",
+        "pulling_1",
+        "pulling_2",
+        "pulling_3",
+        "pulling_4",
+    )
+
+    private val crossbowModelKeys = pullingModelKeys + setOf("arrow", "firework")
+
+    private val legacyModelPrefixes = setOf("optifine/", "mcpatcher/")
 }
+
+private data class ParsedRuleMetadata(
+    val id: String,
+    val items: List<Item>,
+    val name: ParsedName,
+    val hope: String?,
+    val nbtConditions: List<CitNbtCondition>,
+    val weight: Int,
+)
+
+private data class ModelSelection(
+    val type: CitRule.Type,
+    val model: Identifier?,
+    val models: Map<String, Identifier>,
+)

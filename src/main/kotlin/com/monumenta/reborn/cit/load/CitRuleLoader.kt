@@ -6,10 +6,10 @@ import com.monumenta.reborn.cit.rule.ArmorCitRule
 import com.monumenta.reborn.cit.rule.CitRule
 import com.monumenta.reborn.cit.rule.CitRuleConstants
 import com.monumenta.reborn.cit.rule.CitRuleLoadResult
-import net.minecraft.item.Item
-import net.minecraft.resource.Resource
-import net.minecraft.resource.ResourceManager
-import net.minecraft.util.Identifier
+import net.minecraft.resources.Identifier
+import net.minecraft.server.packs.resources.Resource
+import net.minecraft.server.packs.resources.ResourceManager
+import net.minecraft.world.item.Item
 import org.slf4j.Logger
 import java.util.Properties
 
@@ -81,7 +81,7 @@ class CitRuleLoader(private val logger: Logger) {
         armorRules: MutableMap<Item, MutableList<ArmorCitRule>>,
     ) {
         for (root in CitRuleConstants.propertiesRuleRoots) {
-            manager.findResources(root) { it.path.endsWith(".properties") }.forEach { (id, resource) ->
+            manager.listResources(root) { it.path.endsWith(".properties") }.forEach { (id, resource) ->
                 try {
                     loadPropertiesResource(id, resource, itemRules, armorRules)
                 } catch (error: Exception) {
@@ -98,7 +98,7 @@ class CitRuleLoader(private val logger: Logger) {
         armorRules: MutableMap<Item, MutableList<ArmorCitRule>>,
     ) {
         val properties = Properties()
-        resource.reader.use(properties::load)
+        resource.openAsReader().use(properties::load)
 
         val armorRule = CitRuleParser.parseArmorRule(id, properties)
         if (armorRule != null) {

@@ -1,9 +1,9 @@
 package com.monumenta.reborn.cit.rule
 
-import net.minecraft.item.Item
-import net.minecraft.item.equipment.EquipmentAsset
-import net.minecraft.registry.RegistryKey
-import net.minecraft.util.Identifier
+import net.minecraft.resources.Identifier
+import net.minecraft.resources.ResourceKey
+import net.minecraft.world.item.Item
+import net.minecraft.world.item.equipment.EquipmentAsset
 import java.util.regex.Pattern
 
 data class CitRule(
@@ -39,7 +39,7 @@ data class ArmorCitRule(
     val nbtConditions: List<CitNbtCondition>,
     val weight: Int,
     val asset: Identifier,
-    val assetKey: RegistryKey<EquipmentAsset>,
+    val assetKey: ResourceKey<EquipmentAsset>,
 )
 
 data class CitNbtCondition(

@@ -1,11 +1,11 @@
 package com.monumenta.reborn.cit
 
 import com.monumenta.reborn.cit.runtime.CitRuntime
-import net.minecraft.client.render.item.model.ItemModel
-import net.minecraft.item.ItemStack
-import net.minecraft.item.equipment.EquipmentAsset
-import net.minecraft.registry.RegistryKey
-import net.minecraft.resource.ResourceManager
+import net.minecraft.client.renderer.item.ItemModel
+import net.minecraft.resources.ResourceKey
+import net.minecraft.server.packs.resources.ResourceManager
+import net.minecraft.world.item.ItemStack
+import net.minecraft.world.item.equipment.EquipmentAsset
 import org.slf4j.LoggerFactory
 
 object CitRuleManager {
@@ -21,6 +21,6 @@ object CitRuleManager {
         runtime.resolveItemModel(stack)
 
     @JvmStatic
-    fun resolveArmorAsset(stack: ItemStack, fallback: RegistryKey<EquipmentAsset>): RegistryKey<EquipmentAsset> =
+    fun resolveArmorAsset(stack: ItemStack, fallback: ResourceKey<EquipmentAsset>): ResourceKey<EquipmentAsset> =
         runtime.resolveArmorAsset(stack, fallback)
 }
